@@ -3,7 +3,9 @@
 # https://github.com/mrkulk/deepQN_tensorflow
 
 import numpy as np
-import tensorflow as tf
+# import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 class DQN:
     def __init__(self, params):
@@ -29,8 +31,8 @@ class DQN:
         self.b2 = tf.Variable(tf.constant(0.1, shape=[filters]),name=self.network_name + '_'+layer_name+'_biases')
         self.c2 = tf.nn.conv2d(self.o1, self.w2, strides=[1, stride, stride, 1], padding='SAME',name=self.network_name + '_'+layer_name+'_convs')
         self.o2 = tf.nn.relu(tf.add(self.c2,self.b2),name=self.network_name + '_'+layer_name+'_activations')
-        
-        o2_shape = self.o2.get_shape().as_list()        
+
+        o2_shape = self.o2.get_shape().as_list()
 
         # Layer 3 (Fully connected)
         layer_name = 'fc3' ; hiddens = 256 ; dim = o2_shape[1]*o2_shape[2]*o2_shape[3]
@@ -51,12 +53,12 @@ class DQN:
         self.yj = tf.add(self.rewards, tf.multiply(1.0-self.terminals, tf.multiply(self.discount, self.q_t)))
         self.Q_pred = tf.reduce_sum(tf.multiply(self.y,self.actions), reduction_indices=1)
         self.cost = tf.reduce_sum(tf.pow(tf.subtract(self.yj, self.Q_pred), 2))
-        
+
         if self.params['load_file'] is not None:
             self.global_step = tf.Variable(int(self.params['load_file'].split('_')[-1]),name='global_step', trainable=False)
         else:
             self.global_step = tf.Variable(0, name='global_step', trainable=False)
-        
+
         # self.optim = tf.train.RMSPropOptimizer(self.params['lr'],self.params['rms_decay'],0.0,self.params['rms_eps']).minimize(self.cost,global_step=self.global_step)
         self.optim = tf.train.AdamOptimizer(self.params['lr']).minimize(self.cost, global_step=self.global_step)
         self.saver = tf.train.Saver(max_to_keep=0)
@@ -67,7 +69,7 @@ class DQN:
             print('Loading checkpoint...')
             self.saver.restore(self.sess,self.params['load_file'])
 
-        
+
     def train(self,bat_s,bat_a,bat_t,bat_n,bat_r):
         feed_dict={self.x: bat_n, self.q_t: np.zeros(bat_n.shape[0]), self.actions: bat_a, self.terminals:bat_t, self.rewards: bat_r}
         q_t = self.sess.run(self.y,feed_dict=feed_dict)
