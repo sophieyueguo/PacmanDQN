@@ -585,6 +585,8 @@ def readCommand(argv):
         args['numTraining'] = options.numTraining
         if 'numTraining' not in agentOpts:
             agentOpts['numTraining'] = options.numTraining
+
+    agentOpts['ts_type'] = 'pacman'
     pacman = pacmanType(agentOpts)  # Instantiate Pacman with agentArgs
     args['pacman'] = pacman
     pacman.width = agentOpts['width']
@@ -689,6 +691,10 @@ def runGames(layout, pacman, ghosts, display, numGames, record, numTraining=0, c
     rules = ClassicGameRules(timeout)
     games = []
 
+    #############################################################
+    advice_budget = 300 
+    call_counter = 0
+
     for i in range(numGames):
         beQuiet = i < numTraining
         if beQuiet:
@@ -701,7 +707,10 @@ def runGames(layout, pacman, ghosts, display, numGames, record, numTraining=0, c
             rules.quiet = False
         game = rules.newGame(layout, pacman, ghosts,
                              gameDisplay, beQuiet, catchExceptions)
-        game.run()
+
+
+        advice_budget, call_counter = game.run(advice_budget, call_counter)
+    #############################################################
 
         if not beQuiet:
             games.append(game)
