@@ -26,6 +26,9 @@ import os
 import traceback
 import sys
 
+import numpy as np
+import advise
+
 #######################
 # Parts worth reading #
 #######################
@@ -602,7 +605,7 @@ class Game:
         sys.stdout = OLD_STDOUT
         sys.stderr = OLD_STDERR
 
-    def run(self):
+    def run(self, advice_budget, call_counter):
         """
         Main control loop for game play.
         """
@@ -651,11 +654,53 @@ class Game:
         agentIndex = self.startingIndex
         numAgents = len(self.agents)
 
+
+        ########################################################################
+        advice_strategy = 'NoAdvise'
+        # state_importance = 0
+        # teacher_action = None
+        # student_action = 0
+
+
+
+        print ('advice_budget', advice_budget)
+        if advice_budget > 0:
+            np.save('logs/'+advice_strategy+'_budget_used_up', np.array([self.agents[0].numeps]))
+        ########################################################################
+
         while not self.gameOver:
             # Fetch the next agent
             agent = self.agents[agentIndex]
             move_time = 0
             skip_action = False
+
+
+            ####################################################################
+            if agentIndex == 0:
+                if advice_strategy == 'NoAdvise':
+                    # train from scratch
+                    shoud_calc_teacher_advice = False
+
+                elif advice_strategy == 'AlwaysAdvise':
+                    #let the student always takes teacher's action
+                    shoud_calc_teacher_advice, should_advise = True, True
+
+                elif advice_strategy == 'Early' or advice_strategy == 'Alternative':
+                      # does not need state importance or teacher action or student action
+                    call_counter += 1
+                    should_advise, advice_budget = advise.determine_give_advice(advice_budget, advice_strategy, 0, 0, 0, call_counter)
+                    shoud_calc_teacher_advice = should_advise
+                elif advice_strategy == 'Importance' or advice_strategy == 'MistakeCorrecting':
+                    if advice_budget > 0:
+                        shoud_calc_teacher_advice = True
+                    else:
+                        shoud_calc_teacher_advice = False
+                else:
+                    print ('unknow advising strategy, stop!')
+
+
+
+            ####################################################################
 
             # Generate an observation of the state
             if 'observationFunction' in dir(agent):
@@ -676,8 +721,33 @@ class Game:
                         self.unmute()
                         return
                 else:
-                    observation = agent.observationFunction(
-                        self.state.deepCopy())
+
+                    #############################################################
+                    if agentIndex == 0 and shoud_calc_teacher_advice:
+                        agent.qnet.save_ckpt(agent.qnet.params['save_tmp_stundet_file'])
+                        agent.qnet.saver.restore(agent.qnet.sess, agent.lcp)
+                        agent.cnt = agent.qnet.sess.run(agent.qnet.global_step)
+
+                        teacher_observation = agent.observationFunction(self.state.deepCopy())
+                        if advice_strategy == 'Importance' or advice_strategy == 'MistakeCorrecting':
+                            si = agent.get_state_importance(teacher_observation)
+                            # print (si)
+                            if advice_strategy == 'Importance':
+                                should_advise, advice_budget = advise.determine_give_advice(advice_budget, advice_strategy, si, 0, 0, call_counter)
+
+                        agent.qnet.saver.restore(agent.qnet.sess,agent.qnet.params['save_tmp_stundet_file'])
+                        agent.cnt = agent.qnet.sess.run(agent.qnet.global_step)
+
+                        if should_advise:
+                            observation = teacher_observation
+                        else:
+                            observation = agent.observationFunction(self.state.deepCopy())
+
+                    else:
+                        observation = agent.observationFunction(self.state.deepCopy())
+
+                    #############################################################
+
                 self.unmute()
             else:
                 observation = self.state.deepCopy()
@@ -732,7 +802,29 @@ class Game:
                     self.unmute()
                     return
             else:
-                action = agent.getAction(observation)
+
+                #############################################################
+                if agentIndex == 0 and shoud_calc_teacher_advice:
+                    agent.qnet.save_ckpt(agent.qnet.params['save_tmp_stundet_file'])
+                    agent.qnet.saver.restore(agent.qnet.sess, agent.lcp)
+                    agent.cnt = agent.qnet.sess.run(agent.qnet.global_step)
+
+                    teacher_action = agent.getAction(observation)
+
+                    agent.qnet.saver.restore(agent.qnet.sess,agent.qnet.params['save_tmp_stundet_file'])
+                    agent.cnt = agent.qnet.sess.run(agent.qnet.global_step)
+
+                    if should_advise:
+                        action = teacher_action
+                    else:
+                        action = agent.getAction(observation)
+                else:
+                    action = agent.getAction(observation)
+
+                # print ('agent', agent, 'observation', observation, 'action', action, '\n') # observation is grid represent... need features
+                #############################################################
+
+
             self.unmute()
 
             # Execute the action
@@ -779,3 +871,5 @@ class Game:
                     self.unmute()
                     return
         self.display.finish()
+
+        return advice_budget, call_counter
