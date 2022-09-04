@@ -22,17 +22,23 @@ import game
 from collections import deque
 
 # Neural nets
-import tensorflow as tf
+# import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
+
 from DQN import *
 
 params = {
     # Model backups
     'load_file': None,
-    'save_file': None,
-    'save_interval' : 10000, 
+    'save_file': 'saves/',
+    'load_teacher_file': 'teacher_model/tiny/',
+    'save_tmp_stundet_file': 'tmp_stundet_save/tmp',
+    'save_interval' : 100000,
 
     # Training parameters
-    'train_start': 5000,    # Episodes before training starts
+    # 'train_start': 5000,    # Episodes before training starts
+    'train_start': 5000,
     'batch_size': 32,       # Replay memory batch size
     'mem_size': 100000,     # Replay memory size
 
@@ -45,7 +51,7 @@ params = {
     'eps': 1.0,             # Epsilon start value
     'eps_final': 0.1,       # Epsilon end value
     'eps_step': 10000       # Epsilon steps between start and end (linear)
-}                     
+}
 
 
 
@@ -61,7 +67,8 @@ class PacmanDQN(game.Agent):
         self.params['num_training'] = args['numTraining']
 
         # Start Tensorflow session
-        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.1)
+        # gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.1)
+        gpu_options = tf.compat.v1.GPUOptions(allow_growth=True)
         self.sess = tf.Session(config = tf.ConfigProto(gpu_options = gpu_options))
         self.qnet = DQN(self.params)
 
@@ -69,7 +76,7 @@ class PacmanDQN(game.Agent):
         self.general_record_time = time.strftime("%a_%d_%b_%Y_%H_%M_%S", time.localtime())
         # Q and cost
         self.Q_global = []
-        self.cost_disp = 0     
+        self.cost_disp = 0
 
         # Stats
         self.cnt = self.qnet.sess.run(self.qnet.global_step)
@@ -84,6 +91,12 @@ class PacmanDQN(game.Agent):
         self.last_scores = deque()
 
 
+        self.lcp = tf.train.latest_checkpoint(self.params['load_teacher_file'])
+
+
+
+
+
     def getMove(self, state):
         # Exploit / Explore
         if np.random.rand() > self.params['eps']:
@@ -91,7 +104,7 @@ class PacmanDQN(game.Agent):
             self.Q_pred = self.qnet.sess.run(
                 self.qnet.y,
                 feed_dict = {self.qnet.x: np.reshape(self.current_state,
-                                                     (1, self.params['width'], self.params['height'], 6)), 
+                                                     (1, self.params['width'], self.params['height'], 6)),
                              self.qnet.q_t: np.zeros(1),
                              self.qnet.actions: np.zeros((1, 4)),
                              self.qnet.terminals: np.zeros(1),
@@ -99,6 +112,10 @@ class PacmanDQN(game.Agent):
 
             self.Q_global.append(max(self.Q_pred))
             a_winner = np.argwhere(self.Q_pred == np.amax(self.Q_pred))
+
+            x = np.reshape(self.current_state, (1, self.params['width'], self.params['height'], 6))
+            # print ('x shape', x.reshape(-1).shape)
+            # print ('a_winner', a_winner[0][0])
 
             if len(a_winner) > 1:
                 move = self.get_direction(
@@ -114,6 +131,20 @@ class PacmanDQN(game.Agent):
         self.last_action = self.get_value(move)
 
         return move
+
+    ############################################################################
+    def get_state_importance(self, state):
+        self.Q_pred = self.qnet.sess.run(
+            self.qnet.y,
+            feed_dict = {self.qnet.x: np.reshape(self.current_state,
+                                                 (1, self.params['width'], self.params['height'], 6)),
+                         self.qnet.q_t: np.zeros(1),
+                         self.qnet.actions: np.zeros((1, 4)),
+                         self.qnet.terminals: np.zeros(1),
+                         self.qnet.rewards: np.zeros(1)})[0]
+        si = np.max(self.Q_pred) - np.min(self.Q_pred)
+        return si
+    ############################################################################
 
     def get_value(self, direction):
         if direction == Directions.NORTH:
@@ -134,7 +165,7 @@ class PacmanDQN(game.Agent):
             return Directions.SOUTH
         else:
             return Directions.WEST
-            
+
     def observation_step(self, state):
         if self.last_action is not None:
             # Process current experience state
@@ -156,25 +187,25 @@ class PacmanDQN(game.Agent):
             elif reward < 0:
                 self.last_reward = -1.    # Punish time (Pff..)
 
-            
+
             if(self.terminal and self.won):
                 self.last_reward = 100.
             self.ep_rew += self.last_reward
 
-            # Store last experience into memory 
+            # Store last experience into memory
             experience = (self.last_state, float(self.last_reward), self.last_action, self.current_state, self.terminal)
             self.replay_mem.append(experience)
             if len(self.replay_mem) > self.params['mem_size']:
                 self.replay_mem.popleft()
 
             # Save model
-            if(params['save_file']):
+            if(self.params['save_file']):
                 if self.local_cnt > self.params['train_start'] and self.local_cnt % self.params['save_interval'] == 0:
-                    self.qnet.save_ckpt('saves/model-' + params['save_file'] + "_" + str(self.cnt) + '_' + str(self.numeps))
+                    self.qnet.save_ckpt('saves/model-' + self.params['save_file'] + "_" + str(self.cnt) + '_' + str(self.numeps))
                     print('Model saved')
 
             # Train
-            self.train()
+            self.train() # change it to train in the main loop
 
         # Next
         self.local_cnt += 1
@@ -236,9 +267,9 @@ class PacmanDQN(game.Agent):
     def get_onehot(self, actions):
         """ Create list of vectors with 1 values at index of action in list """
         actions_onehot = np.zeros((self.params['batch_size'], 4))
-        for i in range(len(actions)):                                           
-            actions_onehot[i][int(actions[i])] = 1      
-        return actions_onehot   
+        for i in range(len(actions)):
+            actions_onehot[i][int(actions[i])] = 1
+        return actions_onehot
 
     def mergeStateMatrices(self, stateMatrices):
         """ Merge state matrices to one state tensor """
@@ -249,7 +280,7 @@ class PacmanDQN(game.Agent):
         return total
 
     def getStateMatrices(self, state):
-        """ Return wall, ghosts, food, capsules matrices """ 
+        """ Return wall, ghosts, food, capsules matrices """
         def getWallMatrix(state):
             """ Return matrix with wall coordinates set to 1 """
             width, height = state.data.layout.width, state.data.layout.height
@@ -331,7 +362,7 @@ class PacmanDQN(game.Agent):
 
         # Create observation matrix as a combination of
         # wall, pacman, ghost, food and capsule matrices
-        # width, height = state.data.layout.width, state.data.layout.height 
+        # width, height = state.data.layout.width, state.data.layout.height
         width, height = self.params['width'], self.params['height']
         observation = np.zeros((6, height, width))
 
@@ -378,5 +409,4 @@ class PacmanDQN(game.Agent):
         legal = state.getLegalActions(0)
         if move not in legal:
             move = Directions.STOP
-
         return move
